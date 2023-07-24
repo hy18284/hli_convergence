@@ -1,12 +1,23 @@
 from pytorch_lightning.cli import LightningCLI
 
 from classifier import FELDClassifier
-from datamodule import FeldDatamodule
+from peld_datamodule import PeldDatamodule
 
 
 if __name__ == '__main__':
-    LightningCLI(
+    cli = LightningCLI(
         FELDClassifier,
-        FeldDatamodule,
         save_config_kwargs={"overwrite": True},
+        run=False,
+    )
+
+    cli.trainer.fit(
+        model=cli.model, 
+        datamodule=cli.datamodule,
+    )
+
+    cli.trainer.test(
+        model=cli.model, 
+        datamodule=cli.datamodule,
+        ckpt_path='best',
     )

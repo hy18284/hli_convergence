@@ -23,7 +23,7 @@ class ClassificationHead(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
     
     def forward(self, hidden_state):
-        logits = self.dropout(hidden_state)
+        hidden_state = self.dropout(hidden_state)
         logits = self.linear(hidden_state)
         return logits
 
@@ -65,6 +65,13 @@ class FELDClassifier(LightningModule):
                 dropout_rate=self.model.config.hidden_dropout_prob,
             )
             
+        self.val_labels = []
+        self.val_outputs = []
+        self.train_labels = []
+        self.train_outputs = []
+        self.test_labels = []
+        self.test_outputs = []
+
     def _shared_step(self, pair) -> STEP_OUTPUT:
         batch, labels = pair
         output = self.model(**batch)
@@ -78,9 +85,20 @@ class FELDClassifier(LightningModule):
             )
             personality_loss = F.binary_cross_entropy_with_logits(
                 personality_logits.view(-1),
-                target=labels['personality'].view(-1),
+                target=labels['personality'].view(-1).float(),
                 reduction='mean',
             )
+
+            print('person')
+            print(personality_logits.view(-1))
+            print(labels['personality'].view(-1).float())
+
+            print(batch['input_ids'].size())
+            print(batch['input_ids'])
+            print(batch['attention_mask'].size())
+            print(batch['attention_mask'])
+            print()
+
             loss += personality_loss
             output_dict['personality_loss'] = personality_loss
             output_dict['personality_logits'] = personality_logits
@@ -117,18 +135,27 @@ class FELDClassifier(LightningModule):
     def _make_logging_values(self, output, labels):
         logging_values = dict()
         if self.personality:
-            personality_pred = output['personality_logits'].view(-1) > 0.5
+            personality_pred = output['personality_logits'].view(-1, 5) > 0.0
             personality_pred = personality_pred.to(torch.long)
-            personality_labels = labels['personality'].view(-1) > 0.5
-            personality_labels = personality_labels.to(torch.long)
-            acc = accuracy_score(personality_labels.tolist(), personality_pred.tolist())
-            f1 = f1_score(personality_labels.tolist(), personality_pred.tolist())
-            recall = recall_score(personality_labels.tolist(), personality_pred.tolist())
-            precision = precision_score(personality_labels.tolist(), personality_pred.tolist())
-            logging_values['personality/acc'] = acc
-            logging_values['personality/f1'] = f1
-            logging_values['personality/recall'] = recall
-            logging_values['personality/precision'] = precision
+            personality_labels = labels['personality'].view(-1, 5)
+
+            print(output['personality_logits'].view(-1, 5))
+            
+            for i, personality in enumerate('ocean'):
+                print(personality)
+                print(personality_labels[:, i].tolist())
+                print(personality_pred[:, i].tolist())
+                print()
+                acc = accuracy_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
+                f1 = f1_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
+                recall = recall_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
+                precision = precision_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
+                logging_values[f'personality_{personality}/acc'] = acc
+                logging_values[f'personality_{personality}/f1'] = f1
+                logging_values[f'personality_{personality}/recall'] = recall
+                logging_values[f'personality_{personality}/precision'] = precision
+
+            logging_values['personality/loss'] = torch.mean(output['personality_loss'])
         
         if self.emotion:
             emotion_pred = output['emotion_logits'].view(-1, 7)
@@ -143,6 +170,7 @@ class FELDClassifier(LightningModule):
             logging_values['emotion/f1'] = f1
             logging_values['emotion/recall'] = recall
             logging_values['emotion/precision'] = precision
+            logging_values['emotion/loss'] = torch.mean(output['emotion_loss'])
 
         if self.sentiment:
             sentiment_pred = output['sentiment_logits'].view(-1, 3)
@@ -157,39 +185,36 @@ class FELDClassifier(LightningModule):
             logging_values['sentiment/f1'] = f1
             logging_values['sentiment/recall'] = recall
             logging_values['sentiment/precision'] = precision
+            logging_values['sentiment/loss'] = torch.mean(output['sentiment_loss'])
         
         logging_values['loss'] = torch.mean(output['total_loss'])
-        logging_values['personality/loss'] = torch.mean(output['personality_loss'])
-        logging_values['emotion/loss'] = torch.mean(output['emotion_loss'])
-        logging_values['sentiment/loss'] = torch.mean(output['sentiment_loss'])
 
         return logging_values
     
     def training_step(self, pair, idx) -> STEP_OUTPUT:
-        output = self._shared_step(pair)
-        logging_values = self._make_logging_values(output, pair[1])
+        batch, labels = pair
+        outputs = self._shared_step(pair)
+        logging_values = self._make_logging_values(outputs, pair[1])
         
         for key in list(logging_values.keys()):
             logging_values[f'train/{key}'] = logging_values.pop(key)
         logging_values['trainer/global_step'] = self.global_step
-        wandb.log(logging_values)
+        for key, value in logging_values.items():
+            self.log(key, value)
         
-        return output['total_loss']
+        self.train_labels.append(labels)
+        self.train_outputs.append(outputs)
 
-    def validation_step(self, pair, idx) -> STEP_OUTPUT:
-        batch, labels = pair
-        outputs = self._shared_step(pair)
-        self.labels.append(labels)
-        self.outputs.append(outputs)
-    
-    def on_validation_epoch_start(self) -> None:
-        self.labels = []
-        self.outputs = []
+        return outputs['total_loss']
 
-    def on_validation_epoch_end(self) -> None:
+    def on_train_epoch_start(self) -> None:
+        self.train_labels = []
+        self.train_outputs = []
+
+    def on_train_epoch_end(self) -> None:
         combined_labels = dict()
-        for key in self.labels[0].keys():
-            items = [label[key] for label in self.labels]
+        for key in self.train_labels[0].keys():
+            items = [label[key] for label in self.train_labels]
             if items[0].dim() != 0:
                 items = torch.cat(items, dim=0)
             else:
@@ -197,8 +222,8 @@ class FELDClassifier(LightningModule):
             combined_labels[key] = items
 
         combined_outputs = dict()
-        for key in self.outputs[0].keys():
-            items = [output[key] for output in self.outputs]
+        for key in self.train_outputs[0].keys():
+            items = [output[key] for output in self.train_outputs]
             if items[0].dim() != 0:
                 items = torch.cat(items, dim=0)
             else:
@@ -207,10 +232,99 @@ class FELDClassifier(LightningModule):
 
         logging_values = self._make_logging_values(combined_outputs, combined_labels)
         for key in list(logging_values.keys()):
+            logging_values[f'train/{key}_epoch'] = logging_values.pop(key)
+
+        logging_values['trainer/global_step'] = self.global_step
+
+        for key, value in logging_values.items():
+            self.log(key, value)
+
+        self.train_labels = []
+        self.train_outputs = []
+        
+    def validation_step(self, pair, idx) -> STEP_OUTPUT:
+        batch, labels = pair
+        outputs = self._shared_step(pair)
+        self.val_labels.append(labels)
+        self.val_outputs.append(outputs)
+    
+    def on_validation_epoch_start(self) -> None:
+        self.val_labels = []
+        self.val_outputs = []
+
+    def on_validation_epoch_end(self) -> None:
+        combined_labels = dict()
+        for key in self.val_labels[0].keys():
+            items = [label[key] for label in self.val_labels]
+            if items[0].dim() != 0:
+                items = torch.cat(items, dim=0)
+            else:
+                items = torch.stack(items, dim=0)
+            combined_labels[key] = items
+
+        combined_outputs = dict()
+        for key in self.val_outputs[0].keys():
+            items = [output[key] for output in self.val_outputs]
+            if items[0].dim() != 0:
+                items = torch.cat(items, dim=0)
+            else:
+                items = torch.stack(items, dim=0)
+            combined_outputs[key] = items
+
+        logging_values = self._make_logging_values(combined_outputs, combined_labels)
+
+        for key in list(logging_values.keys()):
             logging_values[f'val/{key}'] = logging_values.pop(key)
 
         logging_values['trainer/global_step'] = self.global_step
-        wandb.log(logging_values)
+
+        for key, value in logging_values.items():
+            self.log(key, value)
+
+        self.val_labels = []
+        self.val_outputs = []
+
+    def test_step(self, pair, idx) -> STEP_OUTPUT:
+        batch, labels = pair
+        outputs = self._shared_step(pair)
+        self.test_labels.append(labels)
+        self.test_outputs.append(outputs)
+    
+    def on_validation_epoch_start(self) -> None:
+        self.test_labels = []
+        self.test_outputs = []
+
+    def on_test_epoch_end(self) -> None:
+        combined_labels = dict()
+        for key in self.test_labels[0].keys():
+            items = [label[key] for label in self.test_labels]
+            if items[0].dim() != 0:
+                items = torch.cat(items, dim=0)
+            else:
+                items = torch.stack(items, dim=0)
+            combined_labels[key] = items
+
+        combined_outputs = dict()
+        for key in self.test_outputs[0].keys():
+            items = [output[key] for output in self.test_outputs]
+            if items[0].dim() != 0:
+                items = torch.cat(items, dim=0)
+            else:
+                items = torch.stack(items, dim=0)
+            combined_outputs[key] = items
+
+        logging_values = self._make_logging_values(combined_outputs, combined_labels)
+
+        for key in list(logging_values.keys()):
+            logging_values[f'test/{key}'] = logging_values.pop(key)
+
+        logging_values['trainer/global_step'] = self.global_step
+
+        for key, value in logging_values.items():
+            self.log(key, value)
+
+        self.test_labels = []
+        self.test_outputs = []
 
     def configure_optimizers(self) -> Any:
         return torch.optim.Adam(self.parameters(), self.lr)
