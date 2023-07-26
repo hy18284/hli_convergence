@@ -19,13 +19,18 @@ import wandb
 class ClassificationHead(nn.Module):
     def __init__(self, hidden_dim: int, num_labels: int, dropout_rate: float):
         super().__init__()
-        self.linear = nn.Linear(hidden_dim, num_labels)
+        self.linear_1 = nn.Linear(hidden_dim, hidden_dim)
+        self.linear_2 = nn.Linear(hidden_dim, num_labels)
         self.dropout = nn.Dropout(dropout_rate)
     
     def forward(self, hidden_state):
         hidden_state = self.dropout(hidden_state)
-        logits = self.linear(hidden_state)
-        return logits
+        hidden_state = self.linear_1(hidden_state)
+        hidden_state = F.tanh(hidden_state)
+        hidden_state = self.dropout(hidden_state)
+        hidden_state = self.linear_2(hidden_state)
+
+        return hidden_state
 
 
 class FELDClassifier(LightningModule):
@@ -89,16 +94,6 @@ class FELDClassifier(LightningModule):
                 reduction='mean',
             )
 
-            print('person')
-            print(personality_logits.view(-1))
-            print(labels['personality'].view(-1).float())
-
-            print(batch['input_ids'].size())
-            print(batch['input_ids'])
-            print(batch['attention_mask'].size())
-            print(batch['attention_mask'])
-            print()
-
             loss += personality_loss
             output_dict['personality_loss'] = personality_loss
             output_dict['personality_logits'] = personality_logits
@@ -139,13 +134,7 @@ class FELDClassifier(LightningModule):
             personality_pred = personality_pred.to(torch.long)
             personality_labels = labels['personality'].view(-1, 5)
 
-            print(output['personality_logits'].view(-1, 5))
-            
             for i, personality in enumerate('ocean'):
-                print(personality)
-                print(personality_labels[:, i].tolist())
-                print(personality_pred[:, i].tolist())
-                print()
                 acc = accuracy_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
                 f1 = f1_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
                 recall = recall_score(personality_labels[:, i].tolist(), personality_pred[:, i].tolist())
@@ -156,6 +145,14 @@ class FELDClassifier(LightningModule):
                 logging_values[f'personality_{personality}/precision'] = precision
 
             logging_values['personality/loss'] = torch.mean(output['personality_loss'])
+            acc = accuracy_score(personality_labels.view(-1).tolist(), personality_pred.view(-1).tolist())
+            f1 = f1_score(personality_labels.view(-1).tolist(), personality_pred.view(-1).tolist())
+            recall = recall_score(personality_labels.view(-1).tolist(), personality_pred.view(-1).tolist())
+            precision = precision_score(personality_labels.view(-1).tolist(), personality_pred.view(-1).tolist())
+            logging_values[f'personality/acc'] = acc
+            logging_values[f'personality/f1'] = f1
+            logging_values[f'personality/recall'] = recall
+            logging_values[f'personality/precision'] = precision
         
         if self.emotion:
             emotion_pred = output['emotion_logits'].view(-1, 7)

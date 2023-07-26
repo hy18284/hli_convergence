@@ -3,6 +3,7 @@ from typing import (
     List,
     Dict,
     Any,
+    Optional,
 )
 
 from pytorch_lightning import LightningDataModule
@@ -48,6 +49,7 @@ class PELD(Dataset):
         val_ratio: float = 0.1,
         test_ratio: float = 0.1,
         seed: int = 42,
+        limit_train: Optional[float] = None
     ) -> None:
         super().__init__()
         self.path = path 
@@ -67,6 +69,13 @@ class PELD(Dataset):
             [1.0 - self.val_ratio - self.test_ratio, self.val_ratio, self.test_ratio],
             generator=torch.Generator().manual_seed(seed),
         )
+
+        if limit_train is not None:
+            train, _ = random_split(
+                train,
+                [limit_train, 1.0 - limit_train],
+                generator=torch.Generator().manual_seed(seed),
+            )
 
         traits = torch.tensor([
             value for key, value in self.traits.items()
@@ -129,6 +138,7 @@ class PeldDatamodule(LightningDataModule):
         test_ratio: float = 0.1,
         seed: int = 42,
         batch_size: int = 12,
+        limit_train: Optional[float] = None
     ):
         super().__init__()
         self.tokenizer_path = tokenizer_path
@@ -137,6 +147,7 @@ class PeldDatamodule(LightningDataModule):
         self.test_ratio = test_ratio
         self.seed = seed
         self.batch_size = batch_size
+        self.limit_train = limit_train
     
     def setup(self, stage: str) -> None:
         if stage == 'fit':
@@ -146,6 +157,7 @@ class PeldDatamodule(LightningDataModule):
                 val_ratio=self.val_ratio,
                 test_ratio=self.test_ratio,
                 seed=self.seed,
+                limit_train=self.limit_train,
             )
             self.val = PELD(
                 mode='val',

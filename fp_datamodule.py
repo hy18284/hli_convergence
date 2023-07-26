@@ -7,6 +7,9 @@ from typing import (
 import re
 from collections import defaultdict
 
+from typing import (
+    Optional,
+)
 from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import (
@@ -34,6 +37,7 @@ class FriendsPersona(Dataset):
         val_ratio: float = 0.1,
         test_ratio: float = 0.1,
         seed: int = 42,
+        limit_train: Optional[float] = None
     ) -> None:
         super().__init__()
         self.path = path 
@@ -53,6 +57,13 @@ class FriendsPersona(Dataset):
             [1.0 - self.val_ratio - self.test_ratio, self.val_ratio, self.test_ratio],
             generator=torch.Generator().manual_seed(seed),
         )
+
+        if limit_train is not None:
+            train, _ = random_split(
+                train,
+                [limit_train, 1.0 - limit_train],
+                generator=torch.Generator().manual_seed(seed),
+            )
 
         if self.mode == 'train':
             self.data = train
@@ -120,6 +131,7 @@ class FriendsPersonaDatamodule(LightningDataModule):
         test_ratio: float = 0.1,
         seed: int = 42,
         batch_size: int = 12,
+        limit_train: Optional[float] = None,
     ):
         super().__init__()
         self.tokenizer_path = tokenizer_path
@@ -128,6 +140,7 @@ class FriendsPersonaDatamodule(LightningDataModule):
         self.test_ratio = test_ratio
         self.seed = seed
         self.batch_size = batch_size
+        self.limit_train = limit_train
     
     def setup(self, stage: str) -> None:
         if stage == 'fit':
@@ -137,6 +150,7 @@ class FriendsPersonaDatamodule(LightningDataModule):
                 val_ratio=self.val_ratio,
                 test_ratio=self.test_ratio,
                 seed=self.seed,
+                limit_train=self.limit_train,
             )
             self.val = FriendsPersona(
                 mode='val',
