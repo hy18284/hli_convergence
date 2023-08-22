@@ -8,7 +8,7 @@ trainer:
   logger:
     class_path: pytorch_lightning.loggers.wandb.WandbLogger
     init_args:
-      name: feld_emo
+      name: peld_emo_perso
       project: hli_conv
   callbacks: 
     class_path: pytorch_lightning.callbacks.ModelCheckpoint
@@ -50,7 +50,7 @@ trainer:
   default_root_dir: null
 model:
   model_path: roberta-base
-  personality: false
+  personality: true
   emotion: true
   sentiment: true
   lr: 1.0e-6

@@ -74,7 +74,6 @@ class FriendsPersona(Dataset):
     
     def __getitem__(self, idx):
         sample = self.data[idx]
-        print(sample)
         personality = [float(item) for item in sample[-5:]]
         utterances = sample[2].split('<br><br>')[1:]
 
