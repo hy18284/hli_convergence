@@ -44,13 +44,13 @@ conda activate conv
 ## PELD 감정 및 펄스널리티 트레이트 예측 학습 실행
 
 ```bash
-python run_training.py --config configs/run_peld_emo_person_training_config copy.yml
+python run_training.py --config configs/run_peld_emo_person_training_config.yml
 ```
 
 ## PELD 감정 예측 학습 실행
 
 ```bash
-python run_training.py --config configs/run_peld_emo_person_training_config copy.yml
+python run_training.py --config configs/run_peld_emotion_training_config.yml
 ```
 
 ## FriendsPersona 학습 실행
